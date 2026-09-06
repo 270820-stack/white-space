@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { collidePlayerWithSigns, createInput, createPlayer, EYE_HEIGHT, updatePlayer } from "./player.js?v=3";
-import { createSigns, applyDroppedFigure, pickSwapSigns, updateSigns } from "./signs.js?v=20";
+import { createSigns, applyDroppedFigure, pickSwapSigns, updateSigns } from "./signs.js?v=21";
+import { processOnlinePhoto, warmupOnline } from "./online-composite.js?v=1";
 import { createWires } from "./wires.js?v=30";
 import { createGlitch } from "./glitch.js?v=15";
 import { createSelectBoxes } from "./select-box.js?v=3";
@@ -203,7 +204,7 @@ function startPlay() {
   lockMouse();
 }
 
-function captureFaceBlob() {
+function captureFaceFrame() {
   const width = camVideo.videoWidth;
   const height = camVideo.videoHeight;
   if (!width || !height) return null;
@@ -214,7 +215,7 @@ function captureFaceBlob() {
   ctx.translate(width, 0);
   ctx.scale(-1, 1);
   ctx.drawImage(camVideo, 0, 0);
-  return new Promise((resolve) => frame.toBlob(resolve, "image/jpeg", 0.92));
+  return frame;
 }
 
 async function openOnline() {
@@ -242,6 +243,7 @@ async function openOnline() {
     });
     camVideo.srcObject = camStream;
     await camVideo.play();
+    warmupOnline();
   } catch (err) {
     console.warn("camera unavailable", err);
     camStatus.textContent = "Camera unavailable. Allow access, then choose Online again.";
@@ -284,21 +286,15 @@ async function takeOnlinePhoto() {
   takePhotoBtn.disabled = true;
   camStatus.textContent = "Taking photo…";
   const clickedAt = performance.now();
-  const blob = await captureFaceBlob();
-  if (!blob) {
+  const frame = captureFaceFrame();
+  if (!frame) {
     camStatus.textContent = "Could not capture a frame.";
     takePhotoBtn.disabled = false;
     return;
   }
   startPlay();
   try {
-    const res = await fetch("/api/online-photo", {
-      method: "POST",
-      headers: { "Content-Type": "image/jpeg" },
-      body: blob,
-    });
-    const event = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(event.error || "photo failed");
+    const event = await processOnlinePhoto(frame);
     lastReplaceId = event.id;
     const wait = Math.max(0, 5000 - (performance.now() - clickedAt));
     await new Promise((resolve) => setTimeout(resolve, wait));

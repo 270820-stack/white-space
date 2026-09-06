@@ -301,7 +301,10 @@ export function pickSwapSigns(group, count) {
 }
 
 export async function applyDroppedFigure(group, event, targets) {
-  const texture = await loadTexture(`${event.src}?v=${event.id}`);
+  const src = event.src.startsWith("blob:") || event.src.startsWith("data:")
+    ? event.src
+    : `${event.src}?v=${event.id}`;
+  const texture = await loadTexture(src);
   const previous = liveMaps(group);
   const signs = targets && targets.length ? targets : pickSwapSigns(group, event.count);
   const replaced = [];
