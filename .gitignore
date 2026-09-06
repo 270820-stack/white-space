@@ -1,0 +1,6 @@
+.DS_Store
+__pycache__/
+*.pyc
+assets/inbox/_failed/
+assets/inbox/*.{png,jpg,jpeg,webp,bmp}
+assets/figures-saved/*.glb

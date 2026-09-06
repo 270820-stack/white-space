@@ -1,0 +1,3 @@
+Drop a full-body photo here.
+
+The background will be removed, a random number of signs in the 3D space will be replaced, then this folder will empty itself.

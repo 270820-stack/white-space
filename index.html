@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>White Space</title>
+    <link rel="stylesheet" href="./src/style.css?v=start3" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="overlay">
+      <p class="title">White Space</p>
+      <p class="hint">WASD to walk · mouse to look · click wires to move them</p>
+      <div class="mode-row">
+        <button id="mode-live" type="button">Live</button>
+        <button id="mode-online" type="button">Online</button>
+      </div>
+      <p class="mode-note">Select &quot;online&quot; if you wish to have your image participate in the artwork itself</p>
+    </div>
+    <div id="camera-screen" class="hidden" hidden>
+      <div class="camera-card">
+        <p class="title">Online</p>
+        <p class="hint">Frame your face, then take a photo</p>
+        <div class="camera-frame">
+          <video id="cam-video" autoplay playsinline muted></video>
+        </div>
+        <button id="take-photo" type="button">Take photo</button>
+        <p id="cam-status" class="hint"></p>
+        <button id="cam-back" type="button">Back</button>
+      </div>
+    </div>
+    <div
+      id="pause"
+      class="hidden"
+      hidden
+      style="position:fixed;top:0;left:0;right:0;bottom:0;width:100vw;height:100vh;z-index:9999;display:none;flex-direction:column;align-items:center;justify-content:center;background:rgba(255,255,255,0.38);cursor:default;color:#111;"
+    >
+      <div class="pause-card">
+        <p class="title">Paused</p>
+        <p class="hint">Move your mouse freely, then continue to look around again</p>
+        <div class="volume-panel">
+          <label class="vol-row" for="vol-cables">
+            <span class="vol-name">Cables</span>
+            <input id="vol-cables" type="range" min="0" max="100" value="100" />
+            <span class="vol-val" id="vol-cables-val">100</span>
+          </label>
+          <label class="vol-row" for="vol-anim">
+            <span class="vol-name">Animation</span>
+            <input id="vol-anim" type="range" min="0" max="100" value="100" />
+            <span class="vol-val" id="vol-anim-val">100</span>
+          </label>
+        </div>
+        <button id="continue" type="button">Continue</button>
+        <button id="retake-photo" type="button" hidden>Take another photo</button>
+      </div>
+    </div>
+    <div id="crosshair" aria-hidden="true">
+      <span class="hair hair-h"></span>
+      <span class="hair hair-v"></span>
+    </div>
+    <canvas id="c" tabindex="0"></canvas>
+    <script type="module" src="./src/main.js?v=glb28"></script>
+  </body>
+</html>
