@@ -301,10 +301,15 @@ export function pickSwapSigns(group, count) {
 }
 
 export async function applyDroppedFigure(group, event, targets) {
-  const src = event.src.startsWith("blob:") || event.src.startsWith("data:")
-    ? event.src
-    : `${event.src}?v=${event.id}`;
-  const texture = await loadTexture(src);
+  let texture;
+  if (event.canvas) {
+    texture = prepTexture(new THREE.CanvasTexture(event.canvas));
+  } else {
+    const src = event.src.startsWith("blob:") || event.src.startsWith("data:")
+      ? event.src
+      : `${event.src}?v=${event.id}`;
+    texture = await loadTexture(src);
+  }
   const previous = liveMaps(group);
   const signs = targets && targets.length ? targets : pickSwapSigns(group, event.count);
   const replaced = [];
