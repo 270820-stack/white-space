@@ -78,19 +78,73 @@ async function ensureVision() {
   return visionReady;
 }
 
-function applyMask(ctx, maskBytes, width, height) {
-  const img = ctx.getImageData(0, 0, width, height);
-  const pix = img.data;
-  const n = width * height;
-  let max = 0;
-  for (let i = 0; i < n; i++) if (maskBytes[i] > max) max = maskBytes[i];
-  const personIsHigh = max > 1;
-  for (let i = 0; i < n; i++) {
-    const m = maskBytes[i];
-    const keep = personIsHigh ? m > 16 : m === 0;
-    if (!keep) pix[i * 4 + 3] = 0;
+function applyMask(ctx, maskBytes, maskW, maskH) {
+  const { width, height } = ctx.canvas;
+  const maskCanvas = document.createElement("canvas");
+  maskCanvas.width = maskW;
+  maskCanvas.height = maskH;
+  const mid = maskCanvas.getContext("2d").createImageData(maskW, maskH);
+  const pix = mid.data;
+  for (let i = 0; i < maskBytes.length; i++) {
+    const keep = maskBytes[i] > 0;
+    pix[i * 4 + 3] = keep ? 255 : 0;
   }
-  ctx.putImageData(img, 0, 0);
+  maskCanvas.getContext("2d").putImageData(mid, 0, 0);
+  ctx.save();
+  ctx.globalCompositeOperation = "destination-in";
+  ctx.drawImage(maskCanvas, 0, 0, width, height);
+  ctx.restore();
+}
+
+function opaqueRatio(canvas) {
+  const { width, height } = canvas;
+  const data = canvas.getContext("2d").getImageData(0, 0, width, height).data;
+  let n = 0;
+  for (let i = 3; i < data.length; i += 4) if (data[i] > 40) n += 1;
+  return n / Math.max(1, width * height);
+}
+
+function ellipseFace(source, box) {
+  const cropped = cropCanvas(source, box);
+  const ctx = cropped.getContext("2d");
+  const { width, height } = cropped;
+  ctx.save();
+  ctx.globalCompositeOperation = "destination-in";
+  ctx.beginPath();
+  ctx.ellipse(width * 0.5, height * 0.48, width * 0.42, height * 0.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  return cropped;
+}
+
+function readMask(result) {
+  if (result?.categoryMask) {
+    const mask = result.categoryMask;
+    return { bytes: mask.getAsUint8Array(), width: mask.width, height: mask.height, close: () => mask.close() };
+  }
+  const conf = result?.confidenceMasks?.[0];
+  if (!conf) return null;
+  const floats = conf.getAsFloat32Array();
+  const bytes = new Uint8Array(floats.length);
+  for (let i = 0; i < floats.length; i++) bytes[i] = floats[i] > 0.35 ? 1 : 0;
+  return { bytes, width: conf.width, height: conf.height, close: () => conf.close() };
+}
+
+function segmentOnce(canvas) {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const finish = (result) => {
+      if (done) return;
+      done = true;
+      resolve(result);
+    };
+    try {
+      const out = segmenter.segment(canvas, finish);
+      if (out?.categoryMask || out?.confidenceMasks) finish(out);
+    } catch (err) {
+      reject(err);
+    }
+  });
 }
 
 function cropCanvas(src, box) {
@@ -131,43 +185,25 @@ function faceBoxFromDetections(detections, width, height) {
 async function cutFace(source) {
   const { canvas, ctx } = canvasFromImage(source);
   const { width, height } = canvas;
+  let detections = [];
   try {
     await ensureVision();
-    const detections = faceDetector.detect(canvas).detections;
-    const result = segmenter.segment(canvas);
-    const mask = result.categoryMask;
+    detections = faceDetector.detect(canvas).detections || [];
+    const result = await segmentOnce(canvas);
+    const mask = readMask(result);
     if (mask) {
-      applyMask(ctx, mask.getAsUint8Array(), mask.width, mask.height);
+      applyMask(ctx, mask.bytes, mask.width, mask.height);
       mask.close();
     }
     result.close?.();
-    const box = faceBoxFromDetections(detections, width, height);
-    const cropped = cropCanvas(canvas, box);
-    const data = cropped.getContext("2d").getImageData(0, 0, cropped.width, cropped.height);
-    const tight = opaqueBounds(data.data, cropped.width, cropped.height);
-    return cropCanvas(cropped, tight);
   } catch (err) {
-    console.warn("vision cutout unavailable, using center crop", err);
-    const box = faceBoxFromDetections([], width, height);
-    const cropped = cropCanvas(canvas, box);
-    const cctx = cropped.getContext("2d");
-    const data = cctx.getImageData(0, 0, cropped.width, cropped.height);
-    const pix = data.data;
-    const cx = cropped.width * 0.5;
-    const cy = cropped.height * 0.42;
-    const rx = cropped.width * 0.38;
-    const ry = cropped.height * 0.48;
-    for (let y = 0; y < cropped.height; y++) {
-      for (let x = 0; x < cropped.width; x++) {
-        const u = (x - cx) / rx;
-        const v = (y - cy) / ry;
-        const a = Math.max(0, 1 - (u * u + v * v));
-        pix[(y * cropped.width + x) * 4 + 3] = Math.round(pix[(y * cropped.width + x) * 4 + 3] * a);
-      }
-    }
-    cctx.putImageData(data, 0, 0);
-    return cropped;
+    console.warn("vision cutout unavailable, using ellipse crop", err);
   }
+  const box = faceBoxFromDetections(detections, width, height);
+  let cropped = cropCanvas(canvas, box);
+  if (opaqueRatio(cropped) < 0.05) cropped = ellipseFace(source, box);
+  const data = cropped.getContext("2d").getImageData(0, 0, cropped.width, cropped.height);
+  return cropCanvas(cropped, opaqueBounds(data.data, cropped.width, cropped.height));
 }
 
 function fadeFaceBottom(ctx, width, height) {
