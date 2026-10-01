@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { collidePlayerWithSigns, createInput, createPlayer, EYE_HEIGHT, updatePlayer } from "./player.js?v=3";
 import { createSigns, applyDroppedFigure, pickSwapSigns, updateSigns } from "./signs.js?v=22";
 import { processOnlinePhoto, warmupOnline } from "./online-composite.js?v=6";
-import { createWires } from "./wires.js?v=30";
+import { createWires } from "./wires.js?v=31";
 import { createGlitch } from "./glitch.js?v=15";
 import { createSelectBoxes } from "./select-box.js?v=3";
 import { setCableVolume, unlockHarp } from "./harp.js?v=6";

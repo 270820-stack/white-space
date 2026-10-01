@@ -31,6 +31,7 @@ const LIGHT_RAY = new THREE.Vector3(6.5, 19, -4.5).normalize().negate();
 const SHADOW_MAX_SEGS = 2200;
 const GLOW_TIME = 1;
 const TIP_IGNORE = 0.3;
+const WEAVE_ACROSS = 0.3;
 
 const _diff = new THREE.Vector3();
 const _push = new THREE.Vector3();
@@ -366,14 +367,17 @@ function colorMaterial(color, width, height, cableMapUniform, lineWidth) {
   });
   const pr = Math.min(window.devicePixelRatio || 1, 1.25);
   mat.resolution.set(width * pr, height * pr);
-  mat.customProgramCacheKey = () => "cable-plastic3";
+  mat.customProgramCacheKey = () => "cable-weave1";
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.cableMap = cableMapUniform;
     shader.vertexShader =
       "varying vec2 vCableUv;\n" +
       shader.vertexShader.replace(
         "gl_Position = clip;",
-        "vCableUv = vec2( position.x * 0.5 + 0.5, clamp( position.y, 0.0, 1.0 ) );\n\t\t\tgl_Position = clip;",
+        `float segLen = length( instanceEnd - instanceStart );
+			float tiles = max( 1.0, floor( segLen * ${WEAVE_ACROSS.toFixed(2)} / max( linewidth, 1e-4 ) + 0.5 ) );
+			vCableUv = vec2( position.x * 0.5 + 0.5, clamp( position.y, 0.0, 1.0 ) * tiles );
+			gl_Position = clip;`,
       );
     shader.fragmentShader =
       "varying vec2 vCableUv;\nuniform sampler2D cableMap;\n" +
@@ -382,11 +386,10 @@ function colorMaterial(color, width, height, cableMapUniform, lineWidth) {
         `vec4 diffuseColor = vec4( diffuse, alpha );
 			float across = abs( vCableUv.x - 0.5 ) * 2.0;
 			float tube = pow( 1.0 - across, 0.42 );
-			vec2 cableUv = vec2( vCableUv.x, vCableUv.y * 3.2 );
-			float grain = dot( texture2D( cableMap, cableUv ).rgb, vec3( 0.299, 0.587, 0.114 ) );
-			grain = 0.78 + ( grain - 0.5 ) * 0.55;
-			float plastic = mix( 0.52, 1.22, tube ) * grain;
-			diffuseColor.rgb *= plastic;`,
+			vec2 cableUv = vec2( vCableUv.x * ${WEAVE_ACROSS.toFixed(2)}, vCableUv.y );
+			float weave = dot( texture2D( cableMap, cableUv ).rgb, vec3( 0.299, 0.587, 0.114 ) );
+			weave = 0.45 + weave * 1.35;
+			diffuseColor.rgb *= mix( 0.55, 1.2, tube ) * weave;`,
       );
   };
   return mat;
@@ -468,7 +471,7 @@ export function createWires(scene, signs) {
   const whiteMap = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
   whiteMap.needsUpdate = true;
   const cableMapUniform = { value: whiteMap };
-  new THREE.TextureLoader().load("./assets/textures/cable-plastic.png?v=1", (tex) => {
+  new THREE.TextureLoader().load("./assets/textures/cable-weave.png?v=1", (tex) => {
     cableMapUniform.value = prepCableMap(tex);
   });
 
