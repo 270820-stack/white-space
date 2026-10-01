@@ -3,11 +3,13 @@ import { Line2 } from "three/addons/lines/Line2.js";
 import { LineGeometry } from "three/addons/lines/LineGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { pluckHarp } from "./harp.js?v=6";
+import { liveGroundHeight } from "./terrain.js?v=7";
 
 const WIRE_COLORS = [
-  0xc0392b, 0x27ae60, 0x8b6914, 0xd4a017, 0xa93226, 0x1e8449, 0xb7950b, 0x6e2c00,
-  0x2471a3, 0x1a5276, 0xd35400, 0xe67e22, 0x6c3483, 0x7d3c98, 0x117a65, 0x0e6655,
-  0x922b21, 0xb9770e, 0x1c2833, 0x5d6d7e, 0xcb4335, 0x196f3d, 0x4a235a, 0x1abc9c,
+  0xff2d2d, 0x1ed760, 0xffb000, 0xffe100, 0xff3b30, 0x00e05a,
+  0xffd000, 0xff8a00, 0x1a8cff, 0x3aa0ff, 0xff6a00, 0xff7a1a,
+  0xd04dff, 0xe070ff, 0x00e0c0, 0x00c8a8, 0xff4d4d, 0xffa000,
+  0x4ec3ff, 0x6aa6ff, 0xff3355, 0x22d36a, 0xc44dff, 0x2ef0c8,
 ];
 const SKY_PER_SIGN = [1, 2, 2, 3, 3, 3, 4, 4, 5, 6];
 const SKY_NODES = 28;
@@ -18,7 +20,7 @@ const AIR_LINKS = 34;
 const GRAVITY = new THREE.Vector3(0, -9.5, 0);
 const DAMPING = 0.982;
 const ITERATIONS = 10;
-const MAX_TURN_COS = Math.cos(THREE.MathUtils.degToRad(40));
+const MAX_TURN_COS = Math.cos(THREE.MathUtils.degToRad(26));
 const COLLIDE_CELL = 4;
 const PLAYER_RADIUS = 0.48;
 const CLICK_RADIUS = 0.55;
@@ -26,9 +28,9 @@ const REACH = 30;
 const REACH_SQ = REACH * REACH;
 const FLOOR_Y = 0.02;
 const LINE_WIDTH = 0.03;
-const SHADOW_CHEST_Y = 2.35 * 0.58;
-const LIGHT_RAY = new THREE.Vector3(6.5, 19, -4.5).normalize().negate();
-const SHADOW_MAX_SEGS = 2200;
+const SHADOW_MAX_Y = 8;
+const LIGHT_RAY = new THREE.Vector3(0, 1.2, 6).sub(new THREE.Vector3(14, 36, -68)).normalize();
+const SHADOW_MAX_SEGS = 22000;
 const GLOW_TIME = 1;
 const TIP_IGNORE = 0.3;
 const WEAVE_ACROSS = 0.3;
@@ -107,32 +109,58 @@ function constrain(nodes, rest) {
 }
 
 function projectFloor(out, x, y, z) {
-  const t = y / -LIGHT_RAY.y;
-  out.set(x + LIGHT_RAY.x * t, 0.02, z + LIGHT_RAY.z * t);
+  const down = -LIGHT_RAY.y;
+  let t = Math.max(0, (y - FLOOR_Y) / down);
+  let hx = x + LIGHT_RAY.x * t;
+  let hz = z + LIGHT_RAY.z * t;
+  const hill = liveGroundHeight(hx, hz);
+  t = Math.max(0, (y - hill) / down);
+  hx = x + LIGHT_RAY.x * t;
+  hz = z + LIGHT_RAY.z * t;
+  out.set(hx, liveGroundHeight(hx, hz) + 0.03, hz);
+}
+
+function penumbraHalf(cableW, h) {
+  h = Math.max(0, h);
+  return cableW * 0.55 + 0.012 + h * 0.07 + h * h * 0.012;
+}
+
+function penumbraGain(cableW, h) {
+  h = Math.max(0, h);
+  return Math.min(0.52, 0.44 * Math.exp(-h * 0.3) * (0.82 + cableW * 5));
+}
+
+function penumbraSpread(h) {
+  h = Math.max(0, h);
+  return Math.min(1, Math.pow(h / 2.7, 0.7));
 }
 
 function clipLow(ax, ay, az, bx, by, bz, outA, outB) {
-  if (ay >= SHADOW_CHEST_Y && by >= SHADOW_CHEST_Y) return false;
+  if (ay >= SHADOW_MAX_Y && by >= SHADOW_MAX_Y) return false;
   let x0 = ax;
   let y0 = ay;
   let z0 = az;
   let x1 = bx;
   let y1 = by;
   let z1 = bz;
-  if (ay > SHADOW_CHEST_Y) {
-    const u = (SHADOW_CHEST_Y - by) / (ay - by);
+  if (ay > SHADOW_MAX_Y) {
+    const u = (SHADOW_MAX_Y - by) / (ay - by);
     x0 = bx + (ax - bx) * u;
-    y0 = SHADOW_CHEST_Y;
+    y0 = SHADOW_MAX_Y;
     z0 = bz + (az - bz) * u;
   }
-  if (by > SHADOW_CHEST_Y) {
-    const u = (SHADOW_CHEST_Y - ay) / (by - ay);
+  if (by > SHADOW_MAX_Y) {
+    const u = (SHADOW_MAX_Y - ay) / (by - ay);
     x1 = ax + (bx - ax) * u;
-    y1 = SHADOW_CHEST_Y;
+    y1 = SHADOW_MAX_Y;
     z1 = az + (bz - az) * u;
   }
   projectFloor(outA, x0, y0, z0);
   projectFloor(outB, x1, y1, z1);
+  outA.y = 0.03;
+  outB.y = 0.03;
+  outA.cableY = y0;
+  outB.cableY = y1;
   return true;
 }
 
@@ -154,7 +182,7 @@ function softenBends(nodes) {
     if (al < 1e-6 || bl < 1e-6) continue;
     const dot = (ax * bx + ay * by + az * bz) / (al * bl);
     if (dot >= MAX_TURN_COS) continue;
-    const k = Math.min(0.52, (MAX_TURN_COS - dot) * 0.72);
+    const k = Math.min(0.68, (MAX_TURN_COS - dot) * 0.9);
     p.x += ((prev.x + next.x) * 0.5 - p.x) * k;
     p.y += ((prev.y + next.y) * 0.5 - p.y) * k;
     p.z += ((prev.z + next.z) * 0.5 - p.z) * k;
@@ -194,9 +222,9 @@ function makeDrapeNodes(start, end, count) {
 }
 
 function collideFloor(nodes, radius = 0) {
-  const y = FLOOR_Y + radius;
   for (const node of nodes) {
     if (node.pinned) continue;
+    const y = liveGroundHeight(node.pos.x, node.pos.z) + radius;
     if (node.pos.y >= y) continue;
     const vx = node.pos.x - node.prev.x;
     const vz = node.pos.z - node.prev.z;
@@ -347,6 +375,23 @@ function sampleRope(nodes, count, buffer) {
   return buffer;
 }
 
+const _smooth = new Float32Array(180 * 3);
+
+function smoothSamples(buffer, count) {
+  if (count < 3 || count * 3 > _smooth.length) return;
+  for (let pass = 0; pass < 2; pass++) {
+    _smooth.set(buffer.subarray(0, count * 3));
+    for (let i = 1; i < count - 1; i++) {
+      const a = (i - 1) * 3;
+      const b = i * 3;
+      const c = (i + 1) * 3;
+      buffer[b] = _smooth[a] * 0.2 + _smooth[b] * 0.6 + _smooth[c] * 0.2;
+      buffer[b + 1] = _smooth[a + 1] * 0.2 + _smooth[b + 1] * 0.6 + _smooth[c + 1] * 0.2;
+      buffer[b + 2] = _smooth[a + 2] * 0.2 + _smooth[b + 2] * 0.6 + _smooth[c + 2] * 0.2;
+    }
+  }
+}
+
 function prepCableMap(tex) {
   tex.colorSpace = THREE.NoColorSpace;
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
@@ -367,7 +412,7 @@ function colorMaterial(color, width, height, cableMapUniform, lineWidth) {
   });
   const pr = Math.min(window.devicePixelRatio || 1, 1.25);
   mat.resolution.set(width * pr, height * pr);
-  mat.customProgramCacheKey = () => "cable-weave1";
+  mat.customProgramCacheKey = () => "cable-weave2";
   mat.onBeforeCompile = (shader) => {
     shader.uniforms.cableMap = cableMapUniform;
     shader.vertexShader =
@@ -381,15 +426,22 @@ function colorMaterial(color, width, height, cableMapUniform, lineWidth) {
       );
     shader.fragmentShader =
       "varying vec2 vCableUv;\nuniform sampler2D cableMap;\n" +
-      shader.fragmentShader.replace(
+      shader.fragmentShader
+        .replace(
+        "gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogFactor );",
+        "gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogFactor * 0.42 );",
+      )
+        .replace(
         "vec4 diffuseColor = vec4( diffuse, alpha );",
         `vec4 diffuseColor = vec4( diffuse, alpha );
 			float across = abs( vCableUv.x - 0.5 ) * 2.0;
 			float tube = pow( 1.0 - across, 0.42 );
 			vec2 cableUv = vec2( vCableUv.x * ${WEAVE_ACROSS.toFixed(2)}, vCableUv.y );
-			float weave = dot( texture2D( cableMap, cableUv ).rgb, vec3( 0.299, 0.587, 0.114 ) );
-			weave = 0.45 + weave * 1.35;
-			diffuseColor.rgb *= mix( 0.55, 1.2, tube ) * weave;`,
+			float grain = dot( texture2D( cableMap, cableUv ).rgb, vec3( 0.299, 0.587, 0.114 ) );
+			float weave = clamp( 1.0 + ( grain - 0.23 ) * 2.6, 0.62, 1.55 );
+			diffuseColor.rgb *= mix( 0.9, 1.22, tube ) * weave;
+			float luma = dot( diffuseColor.rgb, vec3( 0.299, 0.587, 0.114 ) );
+			diffuseColor.rgb = clamp( mix( vec3( luma ), diffuseColor.rgb, 1.45 ), 0.0, 1.0 );`,
       );
   };
   return mat;
@@ -523,6 +575,7 @@ export function createWires(scene, signs) {
   function flushRope(spec) {
     const positions = new Float32Array(spec.renderCount * 3);
     sampleRope(spec.nodes, spec.renderCount, positions);
+    smoothSamples(positions, spec.renderCount);
     const geometry = new LineGeometry();
     geometry.setPositions(positions);
     const mat = sharedMaterial(spec.hex, spec.lineWidth);
@@ -572,6 +625,7 @@ export function createWires(scene, signs) {
         const grommet = new THREE.Mesh(grommetGeo, grommetMat);
         grommet.position.copy(local);
         grommet.rotation.x = Math.PI / 2;
+        grommet.scale.setScalar(THREE.MathUtils.clamp(sign.userData.height / 2.7, 0.55, 1.85));
         sign.add(grommet);
       }
       const yaw = Math.random() * Math.PI * 2;
@@ -583,7 +637,7 @@ export function createWires(scene, signs) {
         start.z + Math.sin(yaw) * Math.cos(pitch) * reach,
       );
       const nodes = SKY_NODES + ((Math.random() * 8) | 0);
-      addRope(start, sky, nodes, nodes * 2, 0.01 + Math.random() * 0.018, pickColor(), {
+      addRope(start, sky, nodes, nodes * 3, 0.01 + Math.random() * 0.018, pickColor(), {
         width: pickWidth(),
         attachA: { sign, local },
       });
@@ -621,7 +675,7 @@ export function createWires(scene, signs) {
     const dist = pa.world.distanceTo(pb.world);
     if (dist < 3.2 || dist > 18) continue;
     markPair(a, b);
-    addRope(pa.world, pb.world, CROSS_NODES, CROSS_NODES * 2, 0, pickColor(), {
+    addRope(pa.world, pb.world, CROSS_NODES, CROSS_NODES * 3, 0, pickColor(), {
       drape: true,
       width: pickWidth(),
       attachA: pa,
@@ -642,7 +696,7 @@ export function createWires(scene, signs) {
     const dist = pa.world.distanceTo(pb.world);
     if (dist < 2.8 || dist > 20) continue;
     markPair(a, b);
-    addRope(pa.world, pb.world, AIR_NODES, AIR_NODES * 2, 0.03 + Math.random() * 0.1, pickColor(), {
+    addRope(pa.world, pb.world, AIR_NODES, AIR_NODES * 3, 0.03 + Math.random() * 0.1, pickColor(), {
       width: pickWidth(),
       attachA: pa,
       attachB: pb,
@@ -652,24 +706,70 @@ export function createWires(scene, signs) {
 
   pumpRopes();
 
-  const shadowPos = new Float32Array(SHADOW_MAX_SEGS * 6);
+  const shadowPos = new Float32Array(SHADOW_MAX_SEGS * 36);
+  const shadowAcross = new Float32Array(SHADOW_MAX_SEGS * 12);
+  const shadowGain = new Float32Array(SHADOW_MAX_SEGS * 12);
+  const shadowSpread = new Float32Array(SHADOW_MAX_SEGS * 12);
   const shadowGeo = new THREE.BufferGeometry();
-  shadowGeo.setAttribute("position", new THREE.BufferAttribute(shadowPos, 3));
+  shadowGeo.setAttribute("position", new THREE.BufferAttribute(shadowPos, 3).setUsage(THREE.DynamicDrawUsage));
+  shadowGeo.setAttribute("across", new THREE.BufferAttribute(shadowAcross, 1).setUsage(THREE.DynamicDrawUsage));
+  shadowGeo.setAttribute("strength", new THREE.BufferAttribute(shadowGain, 1).setUsage(THREE.DynamicDrawUsage));
+  shadowGeo.setAttribute("spread", new THREE.BufferAttribute(shadowSpread, 1).setUsage(THREE.DynamicDrawUsage));
   shadowGeo.setDrawRange(0, 0);
-  const shadowLines = new THREE.LineSegments(
-    shadowGeo,
-    new THREE.LineBasicMaterial({
-      color: 0x3a3a3a,
-      transparent: true,
-      opacity: 0.2,
-      depthWrite: false,
-      fog: true,
-    }),
-  );
-  shadowLines.name = "CableShadows";
-  shadowLines.frustumCulled = false;
-  shadowLines.renderOrder = 1;
-  scene.add(shadowLines);
+  const shadowMat = new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    depthTest: true,
+    side: THREE.DoubleSide,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+    uniforms: {
+      shadowColor: { value: new THREE.Color(0x6a5f57) },
+      uFogNear: { value: 9 },
+      uFogFar: { value: 34 },
+    },
+    vertexShader: `
+      attribute float across;
+      attribute float strength;
+      attribute float spread;
+      varying float vAcross;
+      varying float vStrength;
+      varying float vSpread;
+      varying float vFogDepth;
+      void main() {
+        vAcross = across;
+        vStrength = strength;
+        vSpread = spread;
+        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+        vFogDepth = -mvPosition.z;
+        gl_Position = projectionMatrix * mvPosition;
+      }
+    `,
+    fragmentShader: `
+      varying float vAcross;
+      varying float vStrength;
+      varying float vSpread;
+      varying float vFogDepth;
+      uniform vec3 shadowColor;
+      uniform float uFogNear;
+      uniform float uFogFar;
+      void main() {
+        float k = mix(18.0, 4.2, clamp(vSpread, 0.0, 1.0));
+        float blur = exp(-vAcross * vAcross * k);
+        float alpha = vStrength * blur;
+        float fog = smoothstep(uFogNear, uFogFar, vFogDepth);
+        alpha *= 1.0 - fog;
+        if (alpha < 0.004) discard;
+        gl_FragColor = vec4(shadowColor, alpha);
+      }
+    `,
+  });
+  const shadowMesh = new THREE.Mesh(shadowGeo, shadowMat);
+  shadowMesh.name = "CableShadows";
+  shadowMesh.frustumCulled = false;
+  shadowMesh.renderOrder = 1;
+  scene.add(shadowMesh);
 
   const spheres = [
     { center: new THREE.Vector3(), radius: PLAYER_RADIUS, vx: 0, vz: 0 },
@@ -725,8 +825,9 @@ export function createWires(scene, signs) {
       collideSigns(rope.nodes, colliderBuckets, rope.width * 0.55);
       softenBends(rope.nodes);
       sampleRope(rope.nodes, rope.renderCount, rope.positions);
-      const floorY = FLOOR_Y + rope.width * 0.5;
+      smoothSamples(rope.positions, rope.renderCount);
       for (let i = 0; i < rope.renderCount; i++) {
+        const floorY = liveGroundHeight(rope.positions[i * 3], rope.positions[i * 3 + 2]) + rope.width * 0.5;
         rope.positions[i * 3 + 1] = Math.max(floorY, rope.positions[i * 3 + 1]);
       }
       rope.geometry.setPositions(rope.positions);
@@ -745,23 +846,102 @@ export function createWires(scene, signs) {
     }
     let segs = 0;
     for (const rope of ropes) {
-      const nodes = rope.nodes;
-      for (let i = 0; i < nodes.length - 1 && segs < SHADOW_MAX_SEGS; i++) {
-        const a = nodes[i].pos;
-        const b = nodes[i + 1].pos;
-        if (!clipLow(a.x, a.y, a.z, b.x, b.y, b.z, _shadowA, _shadowB)) continue;
-        const o = segs * 6;
-        shadowPos[o] = _shadowA.x;
-        shadowPos[o + 1] = _shadowA.y;
-        shadowPos[o + 2] = _shadowA.z;
-        shadowPos[o + 3] = _shadowB.x;
-        shadowPos[o + 4] = _shadowB.y;
-        shadowPos[o + 5] = _shadowB.z;
+      const samples = rope.positions;
+      const count = rope.renderCount;
+      const stride = 1;
+      for (let i = 0; i < count - stride && segs < SHADOW_MAX_SEGS; i += stride) {
+        const i0 = i * 3;
+        const i1 = (i + stride) * 3;
+        if (!clipLow(
+          samples[i0], samples[i0 + 1], samples[i0 + 2],
+          samples[i1], samples[i1 + 1], samples[i1 + 2],
+          _shadowA, _shadowB,
+        )) continue;
+        const dx = _shadowB.x - _shadowA.x;
+        const dz = _shadowB.z - _shadowA.z;
+        const len = Math.hypot(dx, dz);
+        if (len < 1e-4) continue;
+        const inv = 1 / len;
+        const ux = dx * inv;
+        const uz = dz * inv;
+        const px = -uz;
+        const pz = ux;
+        const ha = _shadowA.cableY - liveGroundHeight(_shadowA.x, _shadowA.z);
+        const hb = _shadowB.cableY - liveGroundHeight(_shadowB.x, _shadowB.z);
+        const wa = penumbraHalf(rope.width, ha);
+        const wb = penumbraHalf(rope.width, hb);
+        const sa = penumbraGain(rope.width, ha);
+        const sb = penumbraGain(rope.width, hb);
+        const fa = penumbraSpread(ha);
+        const fb = penumbraSpread(hb);
+        const pad = Math.min(0.006, len * 0.04);
+        const ax = _shadowA.x - ux * pad;
+        const az = _shadowA.z - uz * pad;
+        const bx = _shadowB.x + ux * pad;
+        const bz = _shadowB.z + uz * pad;
+        const lift = 0.04;
+        const lax = ax + px * wa;
+        const laz = az + pz * wa;
+        const rax = ax - px * wa;
+        const raz = az - pz * wa;
+        const lbx = bx + px * wb;
+        const lbz = bz + pz * wb;
+        const rbx = bx - px * wb;
+        const rbz = bz - pz * wb;
+        const gy = (x, z) => liveGroundHeight(x, z) + lift;
+        const base = segs * 36;
+        const quad = [
+          lax, gy(lax, laz), laz, ax, gy(ax, az), az, lbx, gy(lbx, lbz), lbz,
+          ax, gy(ax, az), az, bx, gy(bx, bz), bz, lbx, gy(lbx, lbz), lbz,
+          ax, gy(ax, az), az, rax, gy(rax, raz), raz, bx, gy(bx, bz), bz,
+          rax, gy(rax, raz), raz, rbx, gy(rbx, rbz), rbz, bx, gy(bx, bz), bz,
+        ];
+        shadowPos.set(quad, base);
+        const ai = segs * 12;
+        shadowAcross[ai] = -1;
+        shadowAcross[ai + 1] = 0;
+        shadowAcross[ai + 2] = -1;
+        shadowAcross[ai + 3] = 0;
+        shadowAcross[ai + 4] = 0;
+        shadowAcross[ai + 5] = -1;
+        shadowAcross[ai + 6] = 0;
+        shadowAcross[ai + 7] = 1;
+        shadowAcross[ai + 8] = 0;
+        shadowAcross[ai + 9] = 1;
+        shadowAcross[ai + 10] = 1;
+        shadowAcross[ai + 11] = 0;
+        shadowGain[ai] = sa;
+        shadowGain[ai + 1] = sa;
+        shadowGain[ai + 2] = sb;
+        shadowGain[ai + 3] = sa;
+        shadowGain[ai + 4] = sb;
+        shadowGain[ai + 5] = sb;
+        shadowGain[ai + 6] = sa;
+        shadowGain[ai + 7] = sa;
+        shadowGain[ai + 8] = sb;
+        shadowGain[ai + 9] = sa;
+        shadowGain[ai + 10] = sb;
+        shadowGain[ai + 11] = sb;
+        shadowSpread[ai] = fa;
+        shadowSpread[ai + 1] = fa;
+        shadowSpread[ai + 2] = fb;
+        shadowSpread[ai + 3] = fa;
+        shadowSpread[ai + 4] = fb;
+        shadowSpread[ai + 5] = fb;
+        shadowSpread[ai + 6] = fa;
+        shadowSpread[ai + 7] = fa;
+        shadowSpread[ai + 8] = fb;
+        shadowSpread[ai + 9] = fa;
+        shadowSpread[ai + 10] = fb;
+        shadowSpread[ai + 11] = fb;
         segs += 1;
       }
     }
     shadowGeo.attributes.position.needsUpdate = true;
-    shadowGeo.setDrawRange(0, segs * 2);
+    shadowGeo.attributes.across.needsUpdate = true;
+    shadowGeo.attributes.strength.needsUpdate = true;
+    shadowGeo.attributes.spread.needsUpdate = true;
+    shadowGeo.setDrawRange(0, segs * 12);
   }
 
   function canSeeHit(camera, origin, hit) {

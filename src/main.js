@@ -1,12 +1,13 @@
 import * as THREE from "three";
 import { collidePlayerWithSigns, createInput, createPlayer, EYE_HEIGHT, updatePlayer } from "./player.js?v=3";
-import { createSigns, applyDroppedFigure, pickSwapSigns, updateSigns } from "./signs.js?v=22";
+import { createSigns, applyDroppedFigure, pickSwapSigns, syncSignHeights, updateSigns } from "./signs.js?v=38";
 import { processOnlinePhoto, warmupOnline } from "./online-composite.js?v=6";
-import { createWires } from "./wires.js?v=31";
+import { createWires } from "./wires.js?v=50";
 import { createGlitch } from "./glitch.js?v=15";
-import { createSelectBoxes } from "./select-box.js?v=3";
+import { createSelectBoxes } from "./select-box.js?v=6";
 import { setCableVolume, unlockHarp } from "./harp.js?v=6";
 import { playSelectLock, playSwapGlitch, setAnimVolume } from "./swap-sfx.js?v=7";
+import { beginTerrainSwap, createTerrain, endTerrainSwap, liveGroundHeight, updateTerrainSwap } from "./terrain.js?v=7";
 
 const canvas = document.querySelector("#c");
 const overlay = document.querySelector("#overlay");
@@ -57,49 +58,45 @@ bindVolume(volAnim, volAnimVal, setAnimVolume, VOL_ANIM_KEY);
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setClearColor(0xffffff, 1);
+renderer.setClearColor(0xfff6f1, 1);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xffffff);
-scene.fog = new THREE.Fog(0xffffff, 8, 40);
+scene.background = new THREE.Color(0xfff6f1);
+scene.fog = new THREE.Fog(0xfff1e6, 9, 34);
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.08, 260);
 
-const hemi = new THREE.HemisphereLight(0xffffff, 0xe8e8e8, 0.92);
+const hemi = new THREE.HemisphereLight(0xfff9f6, 0xf4f1ee, 0.7);
 scene.add(hemi);
-const fill = new THREE.DirectionalLight(0xffffff, 0.62);
-fill.position.set(6.5, 19, -4.5);
-fill.target.position.set(0, 0, 0);
-fill.castShadow = true;
-fill.shadow.mapSize.set(2048, 2048);
-fill.shadow.camera.near = 2;
-fill.shadow.camera.far = 70;
-fill.shadow.camera.left = -46;
-fill.shadow.camera.right = 46;
-fill.shadow.camera.top = 46;
-fill.shadow.camera.bottom = -46;
-fill.shadow.bias = -0.0007;
-fill.shadow.normalBias = 0.03;
-fill.shadow.intensity = 0.32;
+const fill = new THREE.DirectionalLight(0xffffff, 0.28);
+fill.position.set(-9, 14, 12);
 scene.add(fill);
-scene.add(fill.target);
+const warm = new THREE.DirectionalLight(0xffe4c4, 0.82);
+warm.position.set(14, 36, -68);
+warm.target.position.set(0, 1.2, 6);
+warm.castShadow = true;
+warm.shadow.mapSize.set(2048, 2048);
+warm.shadow.camera.near = 20;
+warm.shadow.camera.far = 145;
+warm.shadow.camera.left = -48;
+warm.shadow.camera.right = 48;
+warm.shadow.camera.top = 48;
+warm.shadow.camera.bottom = -48;
+warm.shadow.bias = -0.0008;
+warm.shadow.normalBias = 0.04;
+warm.shadow.intensity = 1.65;
+scene.add(warm);
+scene.add(warm.target);
 
-const floor = new THREE.Mesh(
-  new THREE.PlaneGeometry(160, 160),
-  new THREE.MeshLambertMaterial({ color: 0xffffff }),
-);
-floor.rotation.x = -Math.PI / 2;
-floor.receiveShadow = true;
-scene.add(floor);
-
-const grid = new THREE.GridHelper(120, 96, 0xbdbdbd, 0xdcdcdc);
-grid.position.y = 0.014;
-scene.add(grid);
+const terrain = createTerrain();
+scene.add(terrain.solid);
+scene.add(terrain.wire);
 
 const player = createPlayer();
+player.position.y = liveGroundHeight(player.position.x, player.position.z);
 scene.add(player);
 
 const input = createInput();
@@ -256,6 +253,7 @@ async function runSwap(event) {
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
   swapping = true;
+  beginTerrainSwap();
   lastReplaceId = event.id;
   try {
     const targets = pickSwapSigns(signsReady.group, event.count);
@@ -273,6 +271,7 @@ async function runSwap(event) {
     console.warn("swap failed", err);
   } finally {
     if (selectBoxes) selectBoxes.hide();
+    await endTerrainSwap();
     swapping = false;
   }
 }
@@ -391,17 +390,20 @@ const clock = new THREE.Clock();
 
 function tick() {
   const dt = Math.min(clock.getDelta(), 0.05);
+  updateTerrainSwap(dt);
   if (playing && !paused) {
     if (signGroup) updateSigns(signGroup, dt);
     updatePlayer(player, input, look.yaw, dt);
     if (signGroup) collidePlayerWithSigns(player, signGroup);
   }
+  if (signGroup) syncSignHeights(signGroup);
   if (dt > 1e-5) {
     playerVel.copy(player.position).sub(prevPlayer).divideScalar(dt);
   } else {
     playerVel.set(0, 0, 0);
   }
   prevPlayer.copy(player.position);
+  player.position.y = liveGroundHeight(player.position.x, player.position.z);
   if (wires && !paused) wires.update(dt, player.position, playerVel);
   if (glitch) glitch.update(dt);
   placeCamera();
@@ -458,3 +460,14 @@ createSigns(scene)
     console.error("Failed to load figure signs", err);
   });
 tick();
+
+window.__swapShot = () => {
+  look.pitch = -0.72;
+  look.yaw = 0.25;
+  return runSwap({
+    id: Date.now(),
+    figure: "figure-22",
+    src: "./assets/figures/figure-22.png",
+    count: 3,
+  });
+};

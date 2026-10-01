@@ -61,6 +61,7 @@ def main() -> None:
     watcher = threading.Thread(target=watch_forever, daemon=True)
     watcher.start()
     handler = functools.partial(Handler, directory=str(ROOT))
+    ThreadingHTTPServer.allow_reuse_address = True
     server = ThreadingHTTPServer(("0.0.0.0", PORT), handler)
     print(f"serving {ROOT} at http://127.0.0.1:{PORT}/", flush=True)
     print(f"drop photos in {ROOT / 'assets' / 'inbox'}", flush=True)

@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { groundHeight, liveGroundHeight } from "./terrain.js?v=7";
 
 const FIGURE_URLS = ["./assets/figures/figure-22.png"];
 const MODEL_URL = "./assets/models/voxel-figure-low.glb";
@@ -7,8 +8,10 @@ const MODEL_URL = "./assets/models/voxel-figure-low.glb";
 const SIGN_COUNT = 50;
 const MIN_RADIUS = 6;
 const MAX_RADIUS = 40;
-const MIN_SEPARATION = 2.8;
-const HEIGHT_RANGE = [2.35, 3.55];
+const MIN_SEPARATION = 3.5;
+const HEIGHT_RANGE = [1.35, 5.6];
+const GIANT_RANGE = [8, 14];
+const BURIED_MAX = GIANT_RANGE[1] * 2;
 const grommetMat = new THREE.MeshStandardMaterial({
   color: 0x454545,
   roughness: 0.42,
@@ -16,12 +19,71 @@ const grommetMat = new THREE.MeshStandardMaterial({
 });
 const grommetGeo = new THREE.TorusGeometry(0.022, 0.007, 6, 12);
 
-function pickHeight() {
-  const span = HEIGHT_RANGE[1] - HEIGHT_RANGE[0];
+function pickLift(height, buried) {
+  if (buried) return -(height * (0.38 + Math.random() * 0.16));
+  return 0.32 + Math.random() * 0.9;
+}
+
+function pickTilt() {
+  if (Math.random() < 0.5) return null;
+  const angle = THREE.MathUtils.degToRad(5 + Math.random() * 11);
+  const dir = Math.random() * Math.PI * 2;
+  return { x: Math.sin(dir) * angle, z: Math.cos(dir) * angle };
+}
+
+function pickHeight(maxHeight = HEIGHT_RANGE[1]) {
+  const lo = HEIGHT_RANGE[0];
+  const span = maxHeight - lo;
   const u = Math.random();
-  if (u < 0.14) return HEIGHT_RANGE[0] + Math.random() * span * 0.22;
-  if (u > 0.86) return HEIGHT_RANGE[1] - Math.random() * span * 0.22;
-  return HEIGHT_RANGE[0] + span * 0.28 + Math.random() * span * 0.44;
+  if (u < 0.34) return lo + Math.random() * span * 0.28;
+  if (u > 0.66) return maxHeight - Math.random() * span * 0.28;
+  return lo + span * (0.32 + Math.random() * 0.36);
+}
+
+function pickSpreadHeights(count, lo, hi) {
+  if (count <= 0) return [];
+  const span = hi - lo;
+  if (count <= 1) return [lo + span * (0.2 + Math.random() * 0.6)];
+  const heights = [];
+  const gap = span / (count + 1);
+  for (let i = 0; i < count; i++) {
+    const center = lo + gap * (i + 1);
+    const jitter = (Math.random() - 0.5) * gap * 0.5;
+    heights.push(THREE.MathUtils.clamp(center + jitter, lo, hi));
+  }
+  heights.sort((a, b) => a - b);
+  const minGap = 0.85;
+  for (let i = 1; i < heights.length; i++) {
+    if (heights[i] - heights[i - 1] < minGap) {
+      heights[i] = Math.min(hi, heights[i - 1] + minGap);
+    }
+  }
+  return heights;
+}
+
+function assignGiantHeights(pts) {
+  if (!pts.length) return;
+  const count = Math.min(pts.length, 1 + ((Math.random() * 4) | 0));
+  const order = pts.map((_, i) => i);
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = (Math.random() * (i + 1)) | 0;
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  const buriedPts = [];
+  const openPts = [];
+  for (let i = 0; i < count; i++) {
+    const pt = pts[order[i]];
+    if (pt.buried) buriedPts.push(pt);
+    else openPts.push(pt);
+  }
+  const buriedHeights = pickSpreadHeights(buriedPts.length, GIANT_RANGE[0], BURIED_MAX);
+  const openHeights = pickSpreadHeights(openPts.length, GIANT_RANGE[0], GIANT_RANGE[1]);
+  buriedPts.forEach((pt, i) => {
+    pt.height = buriedHeights[i];
+  });
+  openPts.forEach((pt, i) => {
+    pt.height = openHeights[i];
+  });
 }
 
 function scatterPositions(count) {
@@ -42,11 +104,18 @@ function scatterPositions(count) {
         x,
         z,
         yaw: Math.random() * Math.PI * 2,
-        height: pickHeight(),
         figure: pts.length % FIGURE_URLS.length,
       });
     }
   }
+  const planted = pickSubset(pts.length, 0.5);
+  for (let i = 0; i < pts.length; i++) {
+    const level = planted.has(i);
+    pts[i].planted = level;
+    pts[i].buried = !level && Math.random() < 0.5;
+    pts[i].height = pickHeight(pts[i].buried ? BURIED_MAX : HEIGHT_RANGE[1]);
+  }
+  assignGiantHeights(pts);
   return pts;
 }
 
@@ -75,8 +144,18 @@ function setFrontPlanarUVs(geometry) {
   return bb;
 }
 
+function pickSubset(count, chance) {
+  const n = Math.round(count * chance);
+  const order = Array.from({ length: count }, (_, i) => i);
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = (Math.random() * (i + 1)) | 0;
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  return new Set(order.slice(0, n));
+}
+
 function makePhotoMaterial(texture) {
-  return new THREE.MeshBasicMaterial({
+  const mat = new THREE.MeshLambertMaterial({
     map: texture,
     color: 0xffffff,
     side: THREE.DoubleSide,
@@ -84,6 +163,18 @@ function makePhotoMaterial(texture) {
     transparent: true,
     alphaTest: 0.18,
   });
+  mat.shadowSide = THREE.FrontSide;
+  mat.onBeforeCompile = (shader) => {
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "#include <opaque_fragment>",
+      `float lit = dot( outgoingLight, vec3( 0.299, 0.587, 0.114 ) );
+			float ref = max( dot( diffuseColor.rgb, vec3( 0.299, 0.587, 0.114 ) ), 0.04 );
+			float shade = clamp( lit / ( ref * 0.42 ), 0.0, 1.0 );
+			vec3 shaped = diffuseColor.rgb * mix( 0.32, 1.48, shade );
+			gl_FragColor = vec4( shaped, diffuseColor.a );`,
+    );
+  };
+  return mat;
 }
 
 function prepTexture(texture) {
@@ -115,7 +206,7 @@ async function loadVoxelGeometry() {
   const modelH = Math.max(1e-6, bb.max.y - bb.min.y);
   const modelW = Math.max(1e-6, bb.max.x - bb.min.x);
   const modelD = Math.max(1e-6, bb.max.z - bb.min.z);
-  return { geometry, modelH, modelW, modelD };
+  return { geometry, modelH, modelW, modelD, box: bb.clone() };
 }
 
 export async function createSigns(scene) {
@@ -133,25 +224,39 @@ export async function createSigns(scene) {
     const place = placements[i];
     const height = place.height;
     const scale = height / model.modelH;
+    const level = place.planted;
     const sign = new THREE.Group();
-    sign.position.set(place.x, 0, place.z);
+    sign.userData.lift = level ? 0 : pickLift(height, place.buried);
+    sign.position.set(
+      place.x,
+      sign.userData.lift + groundHeight(place.x, place.z),
+      place.z,
+    );
     sign.rotation.y = place.yaw;
+    const tilt = level ? null : pickTilt();
+    if (tilt) {
+      sign.rotation.x = tilt.x;
+      sign.rotation.z = tilt.z;
+    }
     sign.userData.height = height;
     sign.userData.aspect = model.modelW / model.modelH;
-    sign.userData.halfW = model.modelW * 0.5 * scale;
+    sign.userData.fullHalfW = model.modelW * 0.5 * scale;
+    sign.userData.halfW = sign.userData.fullHalfW;
     sign.userData.halfD = model.modelD * 0.5 * scale;
 
-    const mesh = new THREE.Mesh(model.geometry, makePhotoMaterial(texture));
+    const mat = makePhotoMaterial(texture);
+    const mesh = new THREE.Mesh(model.geometry, mat);
     mesh.name = "Board";
     mesh.scale.setScalar(scale);
     mesh.frustumCulled = false;
     mesh.castShadow = true;
-    mesh.receiveShadow = false;
+    mesh.receiveShadow = true;
     sign.add(mesh);
 
     const grommet = new THREE.Mesh(grommetGeo, grommetMat);
     grommet.position.set(0, height * 0.97, 0);
     grommet.rotation.x = Math.PI / 2;
+    grommet.scale.setScalar(THREE.MathUtils.clamp(height / 2.7, 0.55, 1.85));
     grommet.name = "Grommet";
     sign.add(grommet);
 
@@ -276,6 +381,19 @@ export function updateSigns(group, dt) {
     const u = 0.5 - 0.5 * Math.cos(walk.phase);
     sign.position.x = walk.ax + (walk.bx - walk.ax) * u;
     sign.position.z = walk.az + (walk.bz - walk.az) * u;
+    sign.position.y = sign.userData.lift + liveGroundHeight(sign.position.x, sign.position.z);
+    moved = true;
+  }
+  if (moved) group.updateMatrixWorld(true);
+}
+
+export function syncSignHeights(group) {
+  if (!group) return;
+  let moved = false;
+  for (const sign of group.children) {
+    const y = sign.userData.lift + liveGroundHeight(sign.position.x, sign.position.z);
+    if (sign.position.y === y) continue;
+    sign.position.y = y;
     moved = true;
   }
   if (moved) group.updateMatrixWorld(true);

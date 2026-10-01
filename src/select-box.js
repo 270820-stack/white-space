@@ -125,9 +125,10 @@ export function createSelectBoxes(scene) {
     for (const item of pool) {
       const sign = item.sign;
       if (!sign) continue;
-      const h = sign.userData.height || 2.8;
+      const fullH = sign.userData.height || 2.8;
+      const h = fullH;
       const w = Math.max((sign.userData.halfW || 0.22) * 2.55, h * 0.36);
-      item.root.position.set(sign.position.x, h * 0.5, sign.position.z);
+      item.root.position.set(sign.position.x, sign.position.y + fullH * 0.5, sign.position.z);
       item.root.scale.set(w, h * 1.06, 1);
       item.root.lookAt(camera.position.x, item.root.position.y, camera.position.z);
       item.root.visible = fade > 0.01;
