@@ -3,7 +3,7 @@ import { Line2 } from "three/addons/lines/Line2.js";
 import { LineGeometry } from "three/addons/lines/LineGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { pluckHarp } from "./harp.js?v=6";
-import { liveGroundHeight } from "./terrain.js?v=7";
+import { liveGroundHeight, terrainMoving } from "./terrain.js?v=14";
 
 const WIRE_COLORS = [
   0xff2d2d, 0x1ed760, 0xffb000, 0xffe100, 0xff3b30, 0x00e05a,
@@ -225,7 +225,14 @@ function collideFloor(nodes, radius = 0) {
   for (const node of nodes) {
     if (node.pinned) continue;
     const y = liveGroundHeight(node.pos.x, node.pos.z) + radius;
-    if (node.pos.y >= y) continue;
+    if (node.pos.y >= y) {
+      if (terrainMoving() && node.pos.y < y + 0.55) {
+        const next = node.pos.y + (y - node.pos.y) * 0.45;
+        node.pos.y = next;
+        node.prev.y = next;
+      }
+      continue;
+    }
     const vx = node.pos.x - node.prev.x;
     const vz = node.pos.z - node.prev.z;
     node.pos.y = y;

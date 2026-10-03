@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-import { groundHeight, liveGroundHeight } from "./terrain.js?v=7";
+import { groundHeight, liveGroundHeight } from "./terrain.js?v=14";
 
 const FIGURE_URLS = ["./assets/figures/figure-22.png"];
 const MODEL_URL = "./assets/models/voxel-figure-low.glb";

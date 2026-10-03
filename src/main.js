@@ -1,13 +1,13 @@
 import * as THREE from "three";
 import { collidePlayerWithSigns, createInput, createPlayer, EYE_HEIGHT, updatePlayer } from "./player.js?v=3";
-import { createSigns, applyDroppedFigure, pickSwapSigns, syncSignHeights, updateSigns } from "./signs.js?v=38";
+import { createSigns, applyDroppedFigure, pickSwapSigns, syncSignHeights, updateSigns } from "./signs.js?v=45";
 import { processOnlinePhoto, warmupOnline } from "./online-composite.js?v=6";
-import { createWires } from "./wires.js?v=50";
+import { createWires } from "./wires.js?v=57";
 import { createGlitch } from "./glitch.js?v=15";
 import { createSelectBoxes } from "./select-box.js?v=6";
 import { setCableVolume, unlockHarp } from "./harp.js?v=6";
-import { playSelectLock, playSwapGlitch, setAnimVolume } from "./swap-sfx.js?v=7";
-import { beginTerrainSwap, createTerrain, endTerrainSwap, liveGroundHeight, updateTerrainSwap } from "./terrain.js?v=7";
+import { playSelectLock, playSwapGlitch, setAnimVolume } from "./swap-sfx.js?v=9";
+import { beginTerrainSwap, createTerrain, endTerrainSwap, liveGroundHeight, updateTerrainSwap } from "./terrain.js?v=14";
 
 const canvas = document.querySelector("#c");
 const overlay = document.querySelector("#overlay");
@@ -460,14 +460,3 @@ createSigns(scene)
     console.error("Failed to load figure signs", err);
   });
 tick();
-
-window.__swapShot = () => {
-  look.pitch = -0.72;
-  look.yaw = 0.25;
-  return runSwap({
-    id: Date.now(),
-    figure: "figure-22",
-    src: "./assets/figures/figure-22.png",
-    count: 3,
-  });
-};

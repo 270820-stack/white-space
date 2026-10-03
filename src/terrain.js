@@ -25,9 +25,10 @@ let wirePos = null;
 let wireMat = null;
 let restY = null;
 let phase = 0;
+let phaseAtStart = 0;
 let envelope = 0;
 let mode = "idle";
-let easeT = 0;
+let animStart = 0;
 let easeFrom = 0;
 let settleResolve = null;
 
@@ -37,11 +38,9 @@ function smoothstep(t) {
 }
 
 function waveUnit(x, z, p) {
-  const a = Math.sin(x * 0.155 + p) * Math.cos(z * 0.132 + 0.6);
-  const b = Math.sin(x * 0.072 - z * 0.118 + p * 0.62);
-  const c = Math.cos(z * 0.09 + x * 0.04 - p * 0.38);
-  const n = a * 0.56 + b * 0.5 + c * 0.28;
-  return Math.max(-1, Math.min(1, n * 0.92));
+  const a = Math.sin(x * 0.22 + p);
+  const b = Math.sin(z * 0.19 + p * 0.65);
+  return Math.max(-1, Math.min(1, a * 0.75 + b * 0.55));
 }
 
 function swapDisplacement(x, z) {
@@ -62,6 +61,10 @@ function paintLines(white) {
   wireMat.color.setHex(white ? 0xffffff : 0x000000);
 }
 
+export function terrainMoving() {
+  return mode !== "idle";
+}
+
 function writeHeights(displaced) {
   if (!solidPos || !wirePos || !restY) return;
   const count = solidPos.count;
@@ -77,8 +80,8 @@ function writeHeights(displaced) {
       solidPos.setY(i, y);
       wirePos.setY(i, y + 0.02);
     }
-    solidGeo.computeVertexNormals();
   }
+  solidGeo.computeVertexNormals();
   solidPos.needsUpdate = true;
   wirePos.needsUpdate = true;
 }
@@ -95,7 +98,8 @@ function finishSettle() {
 
 export function beginTerrainSwap() {
   easeFrom = envelope;
-  easeT = 0;
+  phaseAtStart = phase;
+  animStart = performance.now();
   mode = "in";
   paintLines(true);
 }
@@ -106,7 +110,8 @@ export function endTerrainSwap() {
     return Promise.resolve();
   }
   easeFrom = envelope;
-  easeT = 0;
+  phaseAtStart = phase;
+  animStart = performance.now();
   mode = "out";
   paintLines(true);
   return new Promise((resolve) => {
@@ -114,35 +119,27 @@ export function endTerrainSwap() {
   });
 }
 
-export function updateTerrainSwap(dt) {
+export function updateTerrainSwap() {
   if (mode === "idle") return;
-  const step = Math.min(Math.max(dt, 0), 0.05);
-  phase += step * 1.05;
+  const elapsed = Math.max(0, (performance.now() - animStart) / 1000);
+  phase = phaseAtStart + elapsed * 1.05;
 
   if (mode === "in") {
-    easeT += step;
-    const u = smoothstep(easeT / EASE_IN);
+    const u = smoothstep(elapsed / EASE_IN);
     envelope = easeFrom + (1 - easeFrom) * u;
-    if (easeT >= EASE_IN) {
+    if (elapsed >= EASE_IN) {
       envelope = 1;
       mode = "hold";
     }
-    writeHeights(true);
-    return;
-  }
-
-  if (mode === "hold") {
+  } else if (mode === "hold") {
     envelope = 1;
-    writeHeights(true);
-    return;
-  }
-
-  easeT += step;
-  const u = smoothstep(easeT / EASE_OUT);
-  envelope = easeFrom * (1 - u);
-  if (easeT >= EASE_OUT || envelope <= 1e-4) {
-    finishSettle();
-    return;
+  } else {
+    const u = smoothstep(elapsed / EASE_OUT);
+    envelope = easeFrom * (1 - u);
+    if (elapsed >= EASE_OUT || envelope <= 1e-4) {
+      finishSettle();
+      return;
+    }
   }
   writeHeights(true);
 }
@@ -173,14 +170,13 @@ export function createTerrain() {
     new THREE.MeshBasicMaterial({
       color: 0x000000,
       wireframe: true,
-      transparent: true,
-      opacity: 0.86,
       fog: true,
-      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
     }),
   );
   wire.name = "Landscape";
-  wire.renderOrder = 2;
 
   solidGeo = geo;
   solidPos = pos;

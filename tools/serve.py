@@ -27,6 +27,19 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = self.path.split("?", 1)[0]
+        if path == "/api/haptic":
+            if self.client_address[0] not in ("127.0.0.1", "::1"):
+                self.send_error(403)
+                return
+            try:
+                from mac_haptic import haptic_hit
+                haptic_hit()
+            except Exception:
+                pass
+            self.send_response(204)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         if path != "/api/online-photo":
             self.send_error(404)
             return

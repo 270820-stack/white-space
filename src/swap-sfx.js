@@ -197,7 +197,16 @@ export function playSelectLock() {
   }
 }
 
+export function hapticHit() {
+  const vibrate = navigator.vibrate?.bind(navigator);
+  if (vibrate) vibrate([22, 36, 14]);
+  const host = location.hostname;
+  if (host !== "localhost" && host !== "127.0.0.1") return;
+  fetch("/api/haptic", { method: "POST", keepalive: true }).catch(() => {});
+}
+
 export function playSwapGlitch() {
+  hapticHit();
   const audio = getAudioContext();
   if (audio.state === "suspended") audio.resume().catch(() => {});
   const t = audio.currentTime;
